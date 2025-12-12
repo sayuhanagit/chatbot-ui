@@ -1,20 +1,20 @@
 # escape=`
 
-FROM node:18-windowsservercore-ltsc2022 AS base
+FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS base
 SHELL ["powershell", "-Command", "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue';"]
 
-# git（MinGit）だけ入れる（nodeは既に入ってる）
-ENV GIT_VERSION 2.17.1
-ENV GIT_TAG v${GIT_VERSION}.windows.1
-ENV GIT_DOWNLOAD_URL https://github.com/git-for-windows/git/releases/download/${GIT_TAG}/MinGit-${GIT_VERSION}-64-bit.zip
-ENV GIT_TERMINAL_PROMPT 0
+# Node.js (MSI)
+ARG NODE_VERSION=18.20.4
+ENV NODE_MSI_URL=https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-x64.msi
 
-RUN Invoke-WebRequest -Uri $env:GIT_DOWNLOAD_URL -OutFile 'git.zip'; `
-    Expand-Archive -Path git.zip -DestinationPath C:\git\.; `
-    Remove-Item git.zip -Force; `
-    $env:PATH = 'C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;' + $env:PATH; `
+RUN Invoke-WebRequest -Uri $env:NODE_MSI_URL -OutFile C:\node.msi; `
+    Start-Process msiexec.exe -ArgumentList @('/i','C:\node.msi','/qn','/norestart') -Wait; `
+    Remove-Item C:\node.msi -Force; `
+    $nodePath='C:\Program Files\nodejs'; `
+    $env:PATH = \"$nodePath;\" + $env:PATH; `
     [Environment]::SetEnvironmentVariable('PATH', $env:PATH, [EnvironmentVariableTarget]::Machine); `
-    git --version; node -v; npm -v
+    & \"$nodePath\node.exe\" -v; `
+    & \"$nodePath\npm.cmd\" -v
 
 FROM base AS build
 ARG REPO_URL=https://github.com/sayuhanagit/chatbot-ui.git
