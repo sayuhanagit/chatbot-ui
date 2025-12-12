@@ -39,6 +39,8 @@ RUN git clone --depth 1 --branch $env:REPO_REF $env:REPO_URL app
 
 WORKDIR C:\src\app
 RUN if (Test-Path package-lock.json) { npm ci } else { npm install }
+# 例：8GB に拡張（必要なら 4096 / 12288 など調整）
+ENV NODE_OPTIONS=--max-old-space-size=8192
 RUN npm run build
 
 FROM base AS runtime
