@@ -1,115 +1,70 @@
+# escape=`
+
+# =========================
+# Base (Git + Node)
+# =========================
 ARG WINDOWS_IMAGE=mcr.microsoft.com/windows/servercore:ltsc2022
-FROM $WINDOWS_IMAGE AS base
+FROM ${WINDOWS_IMAGE} AS base
 
-# set the default shell as powershell.
-# $ProgressPreference: https://github.com/PowerShell/PowerShell/issues/2138#issuecomment-251261324
-SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+SHELL ["powershell", "-Command", "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue';"]
 
-# install MinGit (especially for "go get" and docker build by git repos)
+# --- MinGit (git clone用) ---
 ENV GIT_VERSION 2.17.1
 ENV GIT_TAG v${GIT_VERSION}.windows.1
 ENV GIT_DOWNLOAD_URL https://github.com/git-for-windows/git/releases/download/${GIT_TAG}/MinGit-${GIT_VERSION}-64-bit.zip
 ENV GIT_DOWNLOAD_SHA256 668d16a799dd721ed126cc91bed49eb2c072ba1b25b50048280a4e2c5ed56e59
-# disable prompt asking for credential
 ENV GIT_TERMINAL_PROMPT 0
-RUN Write-Host ('Downloading {0} ...' -f $env:GIT_DOWNLOAD_URL); \
-	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
-	Invoke-WebRequest -Uri $env:GIT_DOWNLOAD_URL -OutFile 'git.zip'; \
-	\
-	Write-Host 'Expanding ...'; \
-	Expand-Archive -Path git.zip -DestinationPath C:\git\.; \
-	\
-	Write-Host 'Removing ...'; \
-	Remove-Item git.zip -Force; \
-	\
-	Write-Host 'Updating PATH ...'; \
-	$env:PATH = 'C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;' + $env:PATH; \
-	[Environment]::SetEnvironmentVariable('PATH', $env:PATH, [EnvironmentVariableTarget]::Machine); \
-	\
-	Write-Host 'Verifying install ...'; \
-	Write-Host 'git --version'; git --version; \
-	\
-	Write-Host 'Complete.';
 
-ARG GIT_LFS_VERSION=2.5.2
-ENV GIT_LFS_DOWNLOAD_URL https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-windows-amd64-v${GIT_LFS_VERSION}.zip
-RUN Write-Host ('Downloading {0} ...' -f $env:GIT_LFS_DOWNLOAD_URL); \
-	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
-	Invoke-WebRequest -Uri $env:GIT_LFS_DOWNLOAD_URL -OutFile 'git-lfs.zip'; \
-	\
-	Write-Host 'Expanding ...'; \
-	Expand-Archive -Path git-lfs.zip -DestinationPath C:\git-lfs\.; \
-	\
-	Write-Host 'Removing ...'; \
-	Remove-Item git-lfs.zip -Force; \
-	\
-	Write-Host 'Updating PATH ...'; \
-	$env:PATH = 'C:\git-lfs;' + $env:PATH; \
-	[Environment]::SetEnvironmentVariable('PATH', $env:PATH, [EnvironmentVariableTarget]::Machine); \
-	\
-	Write-Host 'Installing ...'; \
-	Write-Host 'git lfs install'; git lfs install --system; \
-	\
-	Write-Host 'Complete.';
+RUN Write-Host ('Downloading {0} ...' -f $env:GIT_DOWNLOAD_URL); `
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
+    Invoke-WebRequest -Uri $env:GIT_DOWNLOAD_URL -OutFile 'git.zip'; `
+    Expand-Archive -Path git.zip -DestinationPath C:\git\.; `
+    Remove-Item git.zip -Force; `
+    $env:PATH = 'C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;' + $env:PATH; `
+    [Environment]::SetEnvironmentVariable('PATH', $env:PATH, [EnvironmentVariableTarget]::Machine); `
+    git --version;
 
-FROM base AS builder
-# ideally, this would be C:\go to match Linux a bit closer, but C:\go is the recommended install path for Go itself on Windows
-ENV GOPATH C:\\gopath
+# --- Node.js (Windows MSIで導入) ---
+# chatbot-uiはNode 18系が無難（必要なら 20 に変えてOK）
+ARG NODE_VERSION=18.20.4
+ENV NODE_MSI_URL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-x64.msi
 
-# PATH isn't actually set in the Docker image, so we have to set it from within the container
-RUN $newPath = ('{0}\bin;C:\go\bin;{1}' -f $env:GOPATH, $env:PATH); \
-	Write-Host ('Updating PATH: {0}' -f $newPath); \
-	[Environment]::SetEnvironmentVariable('PATH', $newPath, [EnvironmentVariableTarget]::Machine);
+RUN Write-Host ('Downloading {0} ...' -f $env:NODE_MSI_URL); `
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
+    Invoke-WebRequest -Uri $env:NODE_MSI_URL -OutFile 'node.msi'; `
+    Start-Process msiexec.exe -ArgumentList @('/i','node.msi','/qn','/norestart') -Wait; `
+    Remove-Item node.msi -Force; `
+    node -v; npm -v;
 
-# install go lang
+# =========================
+# Build stage (clone + npm build)
+# =========================
+FROM base AS build
 
-ENV GOLANG_VERSION 1.25.4
+ARG REPO_URL=https://github.com/sayuhanagit/chatbot-ui.git
+ARG REPO_REF=main
 
-RUN $url = ('https://golang.org/dl/go{0}.windows-amd64.zip' -f $env:GOLANG_VERSION); \
-	Write-Host ('Downloading {0} ...' -f $url); \
-	Invoke-WebRequest -Uri $url -OutFile 'go.zip'; \
-	\
-	Write-Host 'Expanding ...'; \
-	Expand-Archive go.zip -DestinationPath C:\; \
-	\
-	Write-Host 'Verifying install ("go version") ...'; \
-	go version; \
-	\
-	Write-Host 'Removing ...'; \
-	Remove-Item go.zip -Force; \
-	\
-	Write-Host 'Complete.';
+WORKDIR C:\src
 
-# Download the docker executable
-FROM base AS dockercli
-ARG DOCKER_VERSION=20.10.15
-ENV DOCKER_DOWNLOAD_URL https://mobyartifacts.azureedge.net/moby/moby-cli/${DOCKER_VERSION}+azure/windows/windows_amd64/moby-cli-${DOCKER_VERSION}+azure-1.amd64.zip
-RUN Write-Host ('Downloading {0} ...' -f $env:DOCKER_DOWNLOAD_URL); \
-	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
-	Invoke-WebRequest -Uri $env:DOCKER_DOWNLOAD_URL -OutFile 'docker.zip'; \
-	\
-	Write-Host 'Expanding ...'; \
-	Expand-Archive -Path docker.zip -DestinationPath C:\unzip\.; \
-	\
-	Write-Host 'Complete.';
+RUN git clone --depth 1 --branch $env:REPO_REF $env:REPO_URL app
 
-# Build the acr-builder
-FROM builder AS acb
-WORKDIR \\gopath\\src\\github.com\\Azure\\acr-builder
-COPY ./ /gopath/src/github.com/Azure/acr-builder
-RUN Write-Host ('Running build'); \
-	go build -mod vendor -o acb.exe .\cmd\acb; \
-	Write-Host ('Running unit tests'); \
-	go test ./...
+WORKDIR C:\src\app
 
-# setup the runtime environment
+# 依存インストール → ビルド
+# lockfileがあるなら npm ci のほうが安定
+RUN if (Test-Path package-lock.json) { npm ci } else { npm install }
+RUN npm run build
+
+# =========================
+# Runtime stage
+# =========================
 FROM base AS runtime
-ARG ACB_BASEIMAGE=mcr.microsoft.com/windows/servercore:ltsc2022
-COPY --from=dockercli C:/unzip/ C:/docker/
-COPY --from=acb /gopath/src/github.com/Azure/acr-builder/acb.exe C:/acr-builder/acb.exe
-ENV ACB_CONFIGIMAGENAME=$ACB_BASEIMAGE
+WORKDIR C:\app
 
-RUN setx /M PATH $('C:\acr-builder;C:\docker;{0}' -f $env:PATH);
+# build成果物をコピー
+COPY --from=build C:\src\app C:\app
 
-ENTRYPOINT [ "acb.exe" ]
-CMD [ "--help" ]
+EXPOSE 3000
+
+# 本番起動（Next.js想定）
+CMD ["powershell", "-NoLogo", "-NoProfile", "-Command", "npm run start"]
