@@ -116,7 +116,7 @@ if (userMessage) {
     const azureOpenai = new OpenAI({
       apiKey: KEY,
       baseURL: `${ENDPOINT}/openai/deployments/${DEPLOYMENT_ID}`,
-      defaultQuery: { "api-version": "2023-12-01-preview" },
+      defaultQuery: { "api-version": "2024-06-01" },
       defaultHeaders: { "api-key": KEY }
     })
 
