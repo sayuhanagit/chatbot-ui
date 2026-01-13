@@ -3,6 +3,7 @@ import { ChatAPIPayload } from "@/types"
 import { OpenAIStream, StreamingTextResponse } from "ai"
 import OpenAI from "openai"
 import { ChatCompletionCreateParamsBase } from "openai/resources/chat/completions.mjs"
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions"
 // ===== Azure AI Search =====
 const SEARCH_ENDPOINT = process.env.AZURE_AI_SEARCH_ENDPOINT!
 const SEARCH_KEY = process.env.AZURE_AI_SEARCH_API_KEY!
