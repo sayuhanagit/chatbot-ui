@@ -3,12 +3,77 @@ import { ChatAPIPayload } from "@/types"
 import { OpenAIStream, StreamingTextResponse } from "ai"
 import OpenAI from "openai"
 import { ChatCompletionCreateParamsBase } from "openai/resources/chat/completions.mjs"
+// ===== Azure AI Search =====
+const SEARCH_ENDPOINT = process.env.AZURE_AI_SEARCH_ENDPOINT!
+const SEARCH_KEY = process.env.AZURE_AI_SEARCH_API_KEY!
+const SEARCH_INDEX = process.env.AZURE_AI_SEARCH_INDEX_NAME!
+const SEARCH_TOP_K = Number(process.env.AZURE_AI_SEARCH_TOP_K ?? "5")
+
+async function searchDocuments(query: string) {
+  const res = await fetch(
+    `${SEARCH_ENDPOINT}/indexes/${encodeURIComponent(
+      SEARCH_INDEX
+    )}/docs/search?api-version=2023-11-01`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": SEARCH_KEY
+      },
+      body: JSON.stringify({
+        search: query,
+        top: SEARCH_TOP_K
+      })
+    }
+  )
+
+  if (!res.ok) {
+    const t = await res.text().catch(() => "")
+    throw new Error(`Azure AI Search failed: ${res.status} ${t}`)
+  }
+
+  return res.json() as Promise<{ value: any[] }>
+}
+
+function buildRagContext(docs: any[]) {
+  return docs
+    .map((d, i) => {
+      const body =
+        d.content ?? d.text ?? d.chunk ?? d.body ?? ""
+      const title = d.title ?? d.filename ?? `doc_${i + 1}`
+      return `【${i + 1}】${title}\n${body}`
+    })
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 12000)
+}
 
 export const runtime = "edge"
 
 export async function POST(request: Request) {
   const json = await request.json()
   const { chatSettings, messages } = json as ChatAPIPayload
+// ===== RAG: Azure AI Search =====
+const userMessage =
+  messages?.[messages.length - 1]?.content ?? ""
+
+let ragMessages = messages
+
+if (userMessage) {
+  const searchResult = await searchDocuments(userMessage)
+  const context = buildRagContext(searchResult.value ?? [])
+
+  if (context) {
+    const ragSystemMessage = {
+      role: "system",
+      content:
+        "以下の検索結果を根拠に、日本語で正確に回答してください。\n\n" +
+        context
+    }
+
+    ragMessages = [ragSystemMessage, ...messages]
+  }
+}
 
   try {
     const profile = await getServerProfile()
@@ -19,21 +84,29 @@ export async function POST(request: Request) {
     const KEY = profile.azure_openai_api_key
 
     let DEPLOYMENT_ID = ""
-    switch (chatSettings.model) {
-      case "gpt-3.5-turbo":
-        DEPLOYMENT_ID = profile.azure_openai_35_turbo_id || ""
-        break
-      case "gpt-4-turbo-preview":
-        DEPLOYMENT_ID = profile.azure_openai_45_turbo_id || ""
-        break
-      case "gpt-4-vision-preview":
-        DEPLOYMENT_ID = profile.azure_openai_45_vision_id || ""
-        break
-      default:
-        return new Response(JSON.stringify({ message: "Model not found" }), {
-          status: 400
-        })
-    }
+
+　switch (chatSettings.model) {
+  　case "gpt-4o":
+    DEPLOYMENT_ID = profile.azure_openai_4o_id || ""
+    break
+
+  　case "gpt-5-chat":
+    DEPLOYMENT_ID = profile.azure_openai_5_chat_id || ""
+    break
+
+  　case "gpt-5.1-chat":
+    DEPLOYMENT_ID = profile.azure_openai_51_chat_id || ""
+    break
+
+  　default:
+    return new Response(
+      JSON.stringify({
+        message: "サポート外のモデルです。正しいモデルを入力下さい。"
+      }),
+      { status: 400 }
+    )
+}
+
 
     if (!ENDPOINT || !KEY || !DEPLOYMENT_ID) {
       return new Response(
@@ -53,9 +126,8 @@ export async function POST(request: Request) {
 
     const response = await azureOpenai.chat.completions.create({
       model: DEPLOYMENT_ID as ChatCompletionCreateParamsBase["model"],
-      messages: messages as ChatCompletionCreateParamsBase["messages"],
+      messages: ragMessages as ChatCompletionCreateParamsBase["messages"],
       temperature: chatSettings.temperature,
-      max_tokens: chatSettings.model === "gpt-4-vision-preview" ? 4096 : null, // TODO: Fix
       stream: true
     })
 
