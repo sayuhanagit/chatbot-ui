@@ -78,19 +78,15 @@ export async function POST(request: Request) {
 
     let DEPLOYMENT_ID = ""
     switch (chatSettings.model) {
-      case "gpt-4o":
-        DEPLOYMENT_ID = profile.azure_openai_4o_id || ""
-        break
-      case "gpt-5.1-chat":
-        DEPLOYMENT_ID = profile.azure_openai_51_chat_id || ""
-        break
-      default:
-        return new Response(
-          JSON.stringify({
-            message: "サポート外のモデルです。正しいモデルを入力下さい。"
-          }),
-          { status: 400 }
-        )
+  　　case "gpt-4o":
+    　　DEPLOYMENT_ID = profile.azure_openai_45_turbo_id || ""
+    　　break
+  　　default:
+   　　 return new Response(JSON.stringify({ message: "サポート外のモデルです。" }), {
+      　　status: 400
+    })
+}
+
     }
 
     if (!ENDPOINT || !KEY || !DEPLOYMENT_ID) {
