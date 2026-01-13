@@ -89,11 +89,7 @@ if (userMessage) {
   　case "gpt-4o":
     DEPLOYMENT_ID = profile.azure_openai_4o_id || ""
     break
-
-  　case "gpt-5-chat":
-    DEPLOYMENT_ID = profile.azure_openai_5_chat_id || ""
-    break
-
+    
   　case "gpt-5.1-chat":
     DEPLOYMENT_ID = profile.azure_openai_51_chat_id || ""
     break
