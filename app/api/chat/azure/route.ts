@@ -7,21 +7,30 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 export const runtime = "edge"
 
 // ===== Azure AI Search =====
-const SEARCH_ENDPOINT = process.env.AZURE_AI_SEARCH_ENDPOINT!
-const SEARCH_KEY = process.env.AZURE_AI_SEARCH_API_KEY!
-const SEARCH_INDEX = process.env.AZURE_AI_SEARCH_INDEX_NAME!
+// ★ ! を外して「未設定の可能性がある」前提で受ける
+const SEARCH_ENDPOINT = process.env.AZURE_AI_SEARCH_ENDPOINT
+const SEARCH_KEY = process.env.AZURE_AI_SEARCH_API_KEY
+const SEARCH_INDEX = process.env.AZURE_AI_SEARCH_INDEX_NAME
 const SEARCH_TOP_K = Number(process.env.AZURE_AI_SEARCH_TOP_K ?? "5")
 
+// ★ Search が有効かどうか（3つ揃った時だけ true）
+const searchEnabled = !!(SEARCH_ENDPOINT && SEARCH_KEY && SEARCH_INDEX)
+
 async function searchDocuments(query: string) {
+  // ★ 未設定なら検索しない（落とさない）
+  if (!searchEnabled) {
+    return { value: [] as any[] }
+  }
+
   const res = await fetch(
-    `${SEARCH_ENDPOINT}/indexes/${encodeURIComponent(
-      SEARCH_INDEX
+    `${SEARCH_ENDPOINT!}/indexes/${encodeURIComponent(
+      SEARCH_INDEX!
     )}/docs/search?api-version=2023-11-01`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "api-key": SEARCH_KEY
+        "api-key": SEARCH_KEY!
       },
       body: JSON.stringify({
         search: query,
@@ -51,8 +60,9 @@ function buildRagContext(docs: any[]) {
 }
 
 function toOpenAiRole(role: string): "system" | "user" | "assistant" {
-  if (role === "system" || role === "assistant") return role
-  return "user"
+  if (role === "system" || role === "assistant" || role === "user") return role
+  // ★ 不明な role は system に寄せる（安全）
+  return "system"
 }
 
 export async function POST(request: Request) {
@@ -67,7 +77,6 @@ export async function POST(request: Request) {
     const KEY = profile.azure_openai_api_key
 
     let DEPLOYMENT_ID = ""
-    // ★全角スペースを除去して半角にする
     switch (chatSettings.model) {
       case "gpt-4o":
         DEPLOYMENT_ID = profile.azure_openai_4o_id || ""
@@ -90,11 +99,12 @@ export async function POST(request: Request) {
       })
     }
 
-    // ===== RAG: Azure AI Search（tryの中に移動）=====
+    // ===== RAG: Azure AI Search =====
     const userMessage = messages?.[messages.length - 1]?.content ?? ""
     const openAiMessages: ChatCompletionMessageParam[] = []
 
-    if (userMessage) {
+    // ★ Search が設定されている場合だけ実行
+    if (searchEnabled && userMessage) {
       const searchResult = await searchDocuments(userMessage)
       const context = buildRagContext(searchResult.value ?? [])
       if (context) {
@@ -109,7 +119,6 @@ export async function POST(request: Request) {
 
     // Chatbot UI 独自 message → OpenAI message に変換
     for (const m of messages ?? []) {
-      // content だけ使えばOK（chat_id等の独自フィールドは不要）
       openAiMessages.push({
         role: toOpenAiRole(m.role),
         content: m.content ?? ""
@@ -140,4 +149,3 @@ export async function POST(request: Request) {
     })
   }
 }
-
