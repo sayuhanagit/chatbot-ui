@@ -7,20 +7,15 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 export const runtime = "edge"
 
 // ===== Azure AI Search =====
-// ★ ! を外して「未設定の可能性がある」前提で受ける
 const SEARCH_ENDPOINT = process.env.AZURE_AI_SEARCH_ENDPOINT
 const SEARCH_KEY = process.env.AZURE_AI_SEARCH_API_KEY
 const SEARCH_INDEX = process.env.AZURE_AI_SEARCH_INDEX_NAME
 const SEARCH_TOP_K = Number(process.env.AZURE_AI_SEARCH_TOP_K ?? "5")
 
-// ★ Search が有効かどうか（3つ揃った時だけ true）
 const searchEnabled = !!(SEARCH_ENDPOINT && SEARCH_KEY && SEARCH_INDEX)
 
 async function searchDocuments(query: string) {
-  // ★ 未設定なら検索しない（落とさない）
-  if (!searchEnabled) {
-    return { value: [] as any[] }
-  }
+  if (!searchEnabled) return { value: [] as any[] }
 
   const res = await fetch(
     `${SEARCH_ENDPOINT!}/indexes/${encodeURIComponent(
@@ -32,10 +27,7 @@ async function searchDocuments(query: string) {
         "Content-Type": "application/json",
         "api-key": SEARCH_KEY!
       },
-      body: JSON.stringify({
-        search: query,
-        top: SEARCH_TOP_K
-      })
+      body: JSON.stringify({ search: query, top: SEARCH_TOP_K })
     }
   )
 
@@ -61,7 +53,6 @@ function buildRagContext(docs: any[]) {
 
 function toOpenAiRole(role: string): "system" | "user" | "assistant" {
   if (role === "system" || role === "assistant" || role === "user") return role
-  // ★ 不明な role は system に寄せる（安全）
   return "system"
 }
 
@@ -77,29 +68,30 @@ export async function POST(request: Request) {
     const KEY = profile.azure_openai_api_key
 
     let DEPLOYMENT_ID = ""
-    switch (chatSettings.model) {
-  　　case "gpt-4o":
-    　　DEPLOYMENT_ID = profile.azure_openai_45_turbo_id || ""
-    　　break
-  　　default:
-   　　 return new Response(JSON.stringify({ message: "サポート外のモデルです。" }), {
-      　　status: 400
-    })
-}
 
+    // ★ここは全角スペース禁止＆括弧を崩さない
+    switch (chatSettings.model) {
+      case "gpt-4o":
+        DEPLOYMENT_ID = profile.azure_openai_45_turbo_id || ""
+        break
+      default:
+        return new Response(
+          JSON.stringify({ message: "サポート外のモデルです。" }),
+          { status: 400 }
+        )
     }
 
     if (!ENDPOINT || !KEY || !DEPLOYMENT_ID) {
-      return new Response(JSON.stringify({ message: "Azure resources not found" }), {
-        status: 400
-      })
+      return new Response(
+        JSON.stringify({ message: "Azure resources not found" }),
+        { status: 400 }
+      )
     }
 
-    // ===== RAG: Azure AI Search =====
+    // ===== RAG =====
     const userMessage = messages?.[messages.length - 1]?.content ?? ""
     const openAiMessages: ChatCompletionMessageParam[] = []
 
-    // ★ Search が設定されている場合だけ実行
     if (searchEnabled && userMessage) {
       const searchResult = await searchDocuments(userMessage)
       const context = buildRagContext(searchResult.value ?? [])
@@ -113,7 +105,6 @@ export async function POST(request: Request) {
       }
     }
 
-    // Chatbot UI 独自 message → OpenAI message に変換
     for (const m of messages ?? []) {
       openAiMessages.push({
         role: toOpenAiRole(m.role),
